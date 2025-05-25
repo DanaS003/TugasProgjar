@@ -12,173 +12,173 @@ SERVER_ADDRESS = ('172.16.16.101', 6667)
 CONTROL_PORT = 6668
 BUFFER_SIZE = 1024 * 1024
 
-def send_command(command_str=""):
+def kirim_perintah(perintah=""):
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect(SERVER_ADDRESS)
-        s.sendall(command_str.encode())
-        received = ""
-        while True:
-            data = s.recv(BUFFER_SIZE)
-            if not data:
-                break
-            received += data.decode()
-            if "\r\n\r\n" in received:
-                break
-        s.close()
-        return json.loads(received)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.connect(SERVER_ADDRESS)
+            sock.sendall(perintah.encode())
+
+            data_diterima = ""
+            while True:
+                data = sock.recv(BUFFER_SIZE)
+                if not data:
+                    break
+                data_diterima += data.decode()
+                if "\r\n\r\n" in data_diterima:
+                    break
+
+        return json.loads(data_diterima)
     except Exception as e:
         logging.error(f"[CLIENT ERROR] {e}")
         return {"status": "ERROR", "data": str(e)}
 
-def remote_post(filename):
+def unggah_file_ke_server(nama_file):
     try:
-        with open(filename, 'rb') as f:
-            encoded = base64.b64encode(f.read()).decode()
-        command = f"POST {filename} {encoded}\r\n\r\n"
-        result = send_command(command)
-        return result.get('status') == 'OK'
+        with open(nama_file, 'rb') as f:
+            isi_encoded = base64.b64encode(f.read()).decode()
+        perintah = f"POST {nama_file} {isi_encoded}\r\n\r\n"
+        hasil = kirim_perintah(perintah)
+        return hasil.get('status') == 'OK'
     except Exception:
         return False
 
-def remote_get(filename):
+def unduh_file_dari_server(nama_file):
     try:
-        command = f"GET {filename}\r\n\r\n"
-        result = send_command(command)
-        ext = filename.split('.')[-1]
-        new_filename = filename.split('.')[0] + "_" + str(time.time()) + '.' + ext
-        if result.get('status') == 'OK' and 'data_file' in result:
-            with open(new_filename, 'wb') as f:
-                f.write(base64.b64decode(result['data_file']))
-            os.remove(new_filename)  # Optional, hapus file setelah download
+        perintah = f"GET {nama_file}\r\n\r\n"
+        hasil = kirim_perintah(perintah)
+        ekstensi = nama_file.split('.')[-1]
+        nama_baru = f"{nama_file.split('.')[0]}_{time.time()}.{ekstensi}"
+
+        if hasil.get('status') == 'OK' and 'data_file' in hasil:
+            with open(nama_baru, 'wb') as f:
+                f.write(base64.b64decode(hasil['data_file']))
+            os.remove(nama_baru)  # Hapus file setelah digunakan, opsional
             return True
         return False
     except Exception:
         return False
 
-def remote_list():
+def ambil_daftar_file():
     try:
-        command = "LIST\r\n\r\n"
-        result = send_command(command)
-        return result.get('status') == 'OK'
+        perintah = "LIST\r\n\r\n"
+        hasil = kirim_perintah(perintah)
+        return hasil.get('status') == 'OK'
     except Exception:
         return False
 
-def worker(client_id, operation="list", size_mb=10):
-    filename = f"{size_mb}mb.bin"
+def client_worker(id_client, operasi="list", ukuran_mb=10):
+    nama_file = f"{ukuran_mb}mb.bin"
     try:
-        start = time.time()
-        if operation == "post":
-            success = remote_post(filename)
-        elif operation == "get":
-            success = remote_get(filename)
-        elif operation == "list":
-            success = remote_list()
+        awal = time.time()
+
+        if operasi == "post":
+            berhasil = unggah_file_ke_server(nama_file)
+        elif operasi == "get":
+            berhasil = unduh_file_dari_server(nama_file)
+        elif operasi == "list":
+            berhasil = ambil_daftar_file()
         else:
-            return {"client_id": client_id, "status": False, "duration": 0, "throughput": "-"}
+            return {"client_id": id_client, "status": False, "duration": 0, "throughput": "-"}
 
-        end = time.time()
-        duration = round(end - start, 4)
-        throughput = round(int(size_mb * 1024 * 1024 / duration), 4) if duration > 0 and operation != 'list' else "-"
-        return {"client_id": client_id, "status": success, "duration": duration, "throughput": throughput}
+        akhir = time.time()
+        durasi = round(akhir - awal, 4)
+        throughput = round(ukuran_mb * 1024 * 1024 / durasi, 4) if durasi > 0 and operasi != "list" else "-"
+
+        return {"client_id": id_client, "status": berhasil, "duration": durasi, "throughput": throughput}
     except Exception:
-        return {"client_id": client_id, "status": False, "duration": 0, "throughput": "-"}
+        return {"client_id": id_client, "status": False, "duration": 0, "throughput": "-"}
 
-def stress_test(operation, size_mb, n_clients):
-    results = []
+def uji_stres(operasi, ukuran, jumlah_client):
+    hasil_uji = []
     print(f"{'Client':<10} {'Status':<10} {'Duration (s)':<15} {'Throughput (B/s)':<20}")
-    print("="*60)
-    with ThreadPoolExecutor(max_workers=n_clients) as executor:
-        futures = [executor.submit(worker, i, operation, size_mb) for i in range(n_clients)]
-        for future in as_completed(futures):
-            result = future.result()
-            print(f"Client-{result['client_id']:<3}  {str(result['status']):<10} {result['duration']:<15} {result['throughput']:<20}")
-            results.append(result)
-    return results
+    print("=" * 60)
 
-def gen_csv(results, operation, size, clients, server_workers):
-    summary_file = 'stress_test_results_multithreading.csv'
-    file_exists = os.path.isfile(summary_file)
+    with ThreadPoolExecutor(max_workers=jumlah_client) as executor:
+        tugas = [executor.submit(client_worker, i, operasi, ukuran) for i in range(jumlah_client)]
+        for future in as_completed(tugas):
+            hasil = future.result()
+            print(f"Client-{hasil['client_id']:<3}  {str(hasil['status']):<10} {hasil['duration']:<15} {hasil['throughput']:<20}")
+            hasil_uji.append(hasil)
 
-    success = sum(1 for r in results if r['status'])
-    fail = len(results) - success
+    return hasil_uji
 
-    sum_duration = sum(r['duration'] for r in results if r['status'])
-    sum_throughput = sum(r['throughput'] for r in results if r['status'] and r['throughput'] != "-")
+def simpan_ke_csv(hasil, operasi, ukuran, jumlah_client, jumlah_server_worker):
+    nama_file_csv = 'stress_test_results_multithreading.csv'
+    sudah_ada = os.path.isfile(nama_file_csv)
 
-    avg_time = round(sum_duration / success, 4) if success > 0 else "-"
-    avg_throughput = round(sum_throughput / success, 4) if success > 0 and operation != 'list' else "-"
+    jumlah_sukses = sum(1 for h in hasil if h['status'])
+    jumlah_gagal = len(hasil) - jumlah_sukses
 
-    # Hitung status server worker berdasarkan hasil client
-    if fail == 0:
-        success_server = server_workers
-        fail_server = 0
-    else:
-        success_server = 0
-        fail_server = server_workers
+    total_durasi = sum(h['duration'] for h in hasil if h['status'])
+    total_throughput = sum(h['throughput'] for h in hasil if h['status'] and h['throughput'] != "-")
 
-    with open(summary_file, 'a', newline='') as csvfile:
-        fieldnames = [
+    rata_rata_waktu = round(total_durasi / jumlah_sukses, 4) if jumlah_sukses > 0 else "-"
+    rata_rata_throughput = round(total_throughput / jumlah_sukses, 4) if jumlah_sukses > 0 and operasi != "list" else "-"
+
+    sukses_server = jumlah_server_worker if jumlah_gagal == 0 else 0
+    gagal_server = 0 if sukses_server > 0 else jumlah_server_worker
+
+    with open(nama_file_csv, 'a', newline='') as csvfile:
+        kolom = [
             'No', 'Operation', 'Volume', 'Client Workers', 'Server Workers',
             'Average Time (s)', 'Average Throughput (bytes/s)',
             'Success Clients', 'Failed Clients',
             'Success Server Workers', 'Failed Server Workers'
         ]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        if not file_exists:
-            writer.writeheader()
+        penulis = csv.DictWriter(csvfile, fieldnames=kolom)
 
-        if file_exists:
-            with open(summary_file, 'r') as f:
-                row_count = sum(1 for _ in f) - 1  # Kurangi header
-            no = row_count + 1
-        else:
-            no = 1
+        if not sudah_ada:
+            penulis.writeheader()
 
-        writer.writerow({
-            'No': no,
-            'Operation': operation,
-            'Volume': size,
-            'Client Workers': clients,
-            'Server Workers': server_workers,
-            'Average Time (s)': avg_time,
-            'Average Throughput (bytes/s)': avg_throughput,
-            'Success Clients': success,
-            'Failed Clients': fail,
-            'Success Server Workers': success_server,
-            'Failed Server Workers': fail_server
+        nomor = 1
+        if sudah_ada:
+            with open(nama_file_csv, 'r') as f:
+                jumlah_baris = sum(1 for _ in f) - 1
+            nomor = jumlah_baris + 1
+
+        penulis.writerow({
+            'No': nomor,
+            'Operation': operasi,
+            'Volume': ukuran,
+            'Client Workers': jumlah_client,
+            'Server Workers': jumlah_server_worker,
+            'Average Time (s)': rata_rata_waktu,
+            'Average Throughput (bytes/s)': rata_rata_throughput,
+            'Success Clients': jumlah_sukses,
+            'Failed Clients': jumlah_gagal,
+            'Success Server Workers': sukses_server,
+            'Failed Server Workers': gagal_server
         })
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.WARNING)
 
-    # Get server worker count from control port
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((SERVER_ADDRESS[0], CONTROL_PORT))
-        data = s.recv(1024)
-        server_workers = int.from_bytes(data, byteorder='big')
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as kontrol_socket:
+        kontrol_socket.connect((SERVER_ADDRESS[0], CONTROL_PORT))
+        data = kontrol_socket.recv(1024)
+        jumlah_server_worker = int.from_bytes(data, byteorder='big')
 
     mode = input("Pilih mode: [1] Semua kombinasi [2] Input manual: ")
 
     if mode == '1':
-        operations = ["list", "get", "post"]
-        sizes = [10, 50, 100]
-        clients = [1, 5, 50]
+        daftar_operasi = ["list", "get", "post"]
+        ukuran_file = [10, 50, 100]
+        jumlah_klien = [1, 5, 50]
 
-        for operation in operations:
-            for size in sizes:
-                if operation == "get":
-                    for file in glob.glob(f"{size}mb_*.bin"):
-                        os.remove(file)
-                for client_count in clients:
-                    print(f"\nRunning test: Operation={operation}, File={size}mb.bin, Clients={client_count}, Server={server_workers}")
-                    results = stress_test(operation, size, client_count)
-                    gen_csv(results, operation, size, client_count, server_workers)
+        for op in daftar_operasi:
+            for size in ukuran_file:
+                if op == "get":
+                    for f in glob.glob(f"{size}mb_*.bin"):
+                        os.remove(f)
+                for jml_client in jumlah_klien:
+                    print(f"\nRunning test: Operation={op}, File={size}mb.bin, Clients={jml_client}, Server={jumlah_server_worker}")
+                    hasil = uji_stres(op, size, jml_client)
+                    simpan_ke_csv(hasil, op, size, jml_client, jumlah_server_worker)
 
     elif mode == '2':
-        operation = input("Operation (list/get/post): ").strip()
+        op = input("Operation (list/get/post): ").strip()
         size = int(input("File size (MB): "))
-        clients = int(input("Jumlah client: "))
-        print(f"\nRunning test: Operation={operation}, File={size}mb.bin, Clients={clients}, Server={server_workers}")
-        results = stress_test(operation, size, clients)
-        gen_csv(results, operation, size, clients, server_workers)
+        jml_client = int(input("Jumlah client: "))
+        print(f"\nRunning test: Operation={op}, File={size}mb.bin, Clients={jml_client}, Server={jumlah_server_worker}")
+        hasil = uji_stres(op, size, jml_client)
+        simpan_ke_csv(hasil, op, size, jml_client, jumlah_server_worker)
