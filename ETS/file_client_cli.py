@@ -3,91 +3,100 @@ import json
 import base64
 import logging
 
-BUFFER_SIZE = 1024 * 1024
+MAX_PACKET = 1024 * 1024
 
-def send_command(command_str, server_addr):
+
+def exec_command(request: str, address: tuple) -> dict | None:
+    """
+    Kirim perintah ke server dan terima respons JSON.
+    """
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect(server_addr)
-        sock.sendall(command_str.encode())
-        data_received = ""
+        connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        connection.connect(address)
+        connection.sendall(request.encode())
+
+        buffer = ""
         while True:
-            data = sock.recv(BUFFER_SIZE)
-            if not data:
+            chunk = connection.recv(MAX_PACKET)
+            if not chunk:
                 break
-            data_received += data.decode()
-            if "\r\n\r\n" in data_received:
+            buffer += chunk.decode()
+            if "\r\n\r\n" in buffer:
                 break
-        sock.close()
-        return json.loads(data_received)
+
+        connection.close()
+        return json.loads(buffer)
     except Exception as e:
-        logging.error(f"Error: {e}")
+        logging.error(f"Execution error: {e}")
         return None
 
-def remote_list(server_addr):
-    cmd = "LIST\r\n\r\n"
-    resp = send_command(cmd, server_addr)
-    if resp and resp.get('status') == 'OK':
-        print("File list:")
-        for f in resp['data']:
-            print(f"- {f}")
-    else:
-        print("Failed to get file list.")
 
-def remote_get(filename, server_addr):
-    cmd = f"GET {filename}\r\n\r\n"
-    resp = send_command(cmd, server_addr)
+def list_remote(address: tuple) -> None:
+    resp = exec_command("LIST\r\n\r\n", address)
     if resp and resp.get('status') == 'OK':
-        content_b64 = resp['data_file']
-        with open(resp['data_namafile'], 'wb') as f:
-            f.write(base64.b64decode(content_b64))
-        print(f"File {filename} downloaded successfully.")
+        print("Daftar berkas dari server:")
+        for name in resp['data']:
+            print(f"- {name}")
     else:
-        print(f"Failed to get file {filename}.")
+        print("Gagal mengambil daftar berkas.")
 
-def remote_post(filename, server_addr):
+
+def download_remote(filename: str, address: tuple) -> None:
+    resp = exec_command(f"GET {filename}\r\n\r\n", address)
+    if resp and resp.get('status') == 'OK':
+        encoded = resp['data_file']
+        local_name = resp.get('data_namafile', filename)
+        with open(local_name, 'wb') as out:
+            out.write(base64.b64decode(encoded))
+        print(f"Berkas '{filename}' berhasil diunduh sebagai '{local_name}'.")
+    else:
+        print(f"Gagal mengunduh '{filename}'.")
+
+
+def upload_remote(path: str, address: tuple) -> None:
     try:
-        with open(filename, 'rb') as f:
-            content_b64 = base64.b64encode(f.read()).decode()
-        cmd = f"POST {filename} {content_b64}\r\n\r\n"
-        resp = send_command(cmd, server_addr)
+        with open(path, 'rb') as file:
+            data_b64 = base64.b64encode(file.read()).decode()
+        resp = exec_command(f"POST {path} {data_b64}\r\n\r\n", address)
         if resp and resp.get('status') == 'OK':
-            print(f"File {filename} uploaded successfully.")
+            print(f"File '{path}' berhasil diunggah.")
         else:
-            print(f"Failed to upload file {filename}.")
+            print(f"Gagal mengunggah '{path}'.")
     except FileNotFoundError:
-        print(f"File {filename} not found.")
+        print(f"File '{path}' tidak ditemukan.")
 
-def main():
-    server_ip = input("Enter server IP (default localhost): ").strip() or 'localhost'
-    port = input("Enter server port (default 6666): ").strip()
-    port = int(port) if port.isdigit() else 6666
-    server_addr = (server_ip, port)
 
-    while True:
-        print("\nChoose operation:")
-        print("1. List files")
-        print("2. Download file (GET)")
-        print("3. Upload file (POST)")
-        print("4. Exit")
-        choice = input("Select [1-4]: ").strip()
+def main() -> None:
+    host = input("Server host (default: localhost): ").strip() or 'localhost'
+    port_input = input("Server port (default: 6666): ").strip()
+    port_num = int(port_input) if port_input.isdigit() else 6666
+    endpoint = (host, port_num)
+
+    active = True
+    while active:
+        print("\nOperasi:")
+        print("1. Tampilkan daftar berkas")
+        print("2. Unduh berkas")
+        print("3. Unggah berkas")
+        print("4. Keluar")
+        choice = input("Pilih [1-4]: ").strip()
 
         if choice == '1':
-            remote_list(server_addr)
+            list_remote(endpoint)
         elif choice == '2':
-            fname = input("Enter filename to download: ").strip()
+            fname = input("Nama berkas untuk diunduh: ").strip()
             if fname:
-                remote_get(fname, server_addr)
+                download_remote(fname, endpoint)
         elif choice == '3':
-            fname = input("Enter filename to upload: ").strip()
+            fname = input("Nama berkas untuk diunggah: ").strip()
             if fname:
-                remote_post(fname, server_addr)
+                upload_remote(fname, endpoint)
         elif choice == '4':
-            print("Bye!")
-            break
+            active = False
         else:
-            print("Invalid choice.")
+            print("Pilihan tidak valid.")
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     logging.basicConfig(level=logging.WARNING)
     main()
