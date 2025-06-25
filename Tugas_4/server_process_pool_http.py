@@ -11,9 +11,6 @@ from http import HttpServer
 http_request_handler = HttpServer()
 
 # Configure logging for the server (important for multiprocessing: careful with loggers)
-# For ProcessPoolExecutor, it's often better to configure logging inside the worker function
-# or use a multiprocessing-safe logging queue. For simplicity here, we'll keep it global
-# but be aware of potential issues with concurrent logging from multiple processes.
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 
 def receive_complete_http_request(client_socket):
