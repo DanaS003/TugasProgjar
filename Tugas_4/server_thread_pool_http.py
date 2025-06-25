@@ -4,7 +4,6 @@ import sys
 import logging
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
-# Assume HttpServer class is in 'http.py'
 from http import HttpServer
 
 # Initialize the HTTP server handler
